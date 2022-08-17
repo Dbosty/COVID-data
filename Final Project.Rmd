@@ -1,0 +1,312 @@
+---
+title: "Final Project"
+author: "Daniel Bostwick"
+date: "5/2/2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+Did the closure of non-essential businesses affect the change in air quality during the year 2020? If so why?
+Were there any factors that led to these results?
+
+```{r}
+file.choose()
+```
+
+```{r message=FALSE, echo=FALSE}
+library(dplyr)
+library(ggplot2)
+
+# Standard deviation function for samples 
+nsd = function(x){
+  sqrt(mean((x-mean(x))^2))
+} 
+```
+
+
+
+```{r message=FALSE,echo=F}
+
+# This is where the data starts. Subset and new table of the data starts on line 27. 
+data = read.csv("/Users/dbosty/Downloads/covid.csv")
+update = data.frame(Location=data$Location, 
+                           Total.Pop=data$Total.Population,
+                           Average.AQI.2019=data$average.AQI.2019, 
+                           Average.AQI.2020=data$average.AQI.2020,
+                    Non.Essential.Business.Closures = data$Non.Essential.Business.Closures,
+                    Date.of.Open.Close = data$Date.of.New.Business.Closures.or.Limits.Order) 
+covid.precise = data.frame(slice(update, -c(51)))
+
+
+# First and Third Quarters of Pop.Total 
+# summary(covid.precise$Total.Pop)
+first.qtr = 1789606
+third.qtr = 7446805
+
+# Adding in population density indicators for the total population (Total.Pop)
+Pop.Density = c()
+for(i in 1:length(covid.precise$Total.Pop)){
+  if(covid.precise$Total.Pop[i] <= first.qtr){
+    Pop.Density = append(Pop.Density, "low")
+  }
+  else if(covid.precise$Total.Pop[i] > first.qtr & 
+          covid.precise$Total.Pop[i] < third.qtr){
+    Pop.Density = append(Pop.Density, "mid")
+  }
+  else{
+    Pop.Density = append(Pop.Density, "high")
+  }
+}
+covid.precise$Pop.Density=Pop.Density
+
+# Adding closure and re-opening indicators 
+NEBC.Status = c()
+for(i in 1:length(covid.precise$Non.Essential.Business.Closures)){
+  if(covid.precise$Non.Essential.Business.Closures[i] == 'All Non-Essential Businesses Permitted to Reopen'){
+    NEBC.Status = append(NEBC.Status, "All Open")
+  }
+  else if(covid.precise$Non.Essential.Business.Closures[i] == 'All Non-Essential Businesses Permitted to Reopen with Reduced Capacity'){
+    NEBC.Status = append(NEBC.Status, "All Open Limit")
+  }
+  else if(covid.precise$Non.Essential.Business.Closures[i] == 'Some Non-Essential Businesses Permitted to Reopen'){
+    NEBC.Status = append(NEBC.Status, "Some Open")
+  }
+  else if(covid.precise$Non.Essential.Business.Closures[i] == 'Some Non-Essential Businesses Permitted to Reopen with Reduced Capacity'){
+    NEBC.Status = append(NEBC.Status, "Some Open Limit")
+  }
+  else if(covid.precise$Non.Essential.Business.Closures[i] == 'New Business Closures or Limits'){
+    NEBC.Status = append(NEBC.Status, "Closed")
+  }
+  else NEBC.Status= append(NEBC.Status, "Never Closed")
+}
+covid.precise$NEBC.Status=NEBC.Status
+```
+
+
+
+#### Linear Regression model on AQI from 2019 to 2020 
+
+- I'm interested in seeing some correlation between the average air quality from 2019 and the average air quality from 2020.
+- There is a positive correlation between the AQI's. Correlation coefficient equal to 0.702.
+```{r warning=FALSE, message=FALSE, echo=F}
+
+nebc = covid.precise$Non.Essential.Business.Closures
+
+
+# Filtered data for the average air quality indexes from 2019 and 2020. 
+# Data table 'no.wyoming' excludes wyoming due to an NA value in the 2019 AQI vector.
+# 'no.wyoming' should only be used for the regression analysis
+no.wyoming = filter(covid.precise, Location != "Wyoming")
+T19 = no.wyoming$Average.AQI.2019
+T20 = no.wyoming$Average.AQI.2020
+pop=no.wyoming$Total.Pop
+
+# Scatter plot of the data.
+ggplot(no.wyoming, aes(T19, T20)) +
+  geom_point(aes(col=Pop.Density),alpha=0.5) + 
+  geom_smooth(method = "lm", se=F, col="black") +
+  ggtitle("Air quality averages in the US")  + xlab("2019 AQI") + ylab("2020 AQI") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+#### Linear Regression Test. Lets see some summary statistics for the graph. 
+
+- The average of the AQI from 2019 was 35.44 give or take 11.23.
+- The average of the AQI from 2020 was 28.44 give or take 7.96.
+- The r.m.s. error is about 5.669.
+- There seems to be some good correlation between the averages of the two AQIs.
+- However, this doesn’t tell us much about why the data is correlated or how this pertains to non-essential business closures.
+```{r echo=FALSE, comment=NA}
+mean1=mean(T19)
+mean2=mean(T20)
+sd1=nsd(T19)
+sd2=nsd(T20)
+
+
+
+# Correlation of averages of air quality indexes with scatter plot
+AQI.cor = cor(T20,T19)
+fit = lm(T19 ~ T20, no.wyoming)
+rms.error = sqrt(1-(0.702)^2)*7.96
+```
+
+
+
+#### Testing for independence between population size and the status of business closures nationwide using a Chi-Squared Distribution.
+
+
+```{r echo=FALSE}
+
+# `row.names` to create row names
+
+# Sub setting the covid.precise data frame by population density indicators
+high = filter(covid.precise, Pop.Density == 'high')
+mid = filter(covid.precise, Pop.Density == 'mid')
+low = filter(covid.precise, Pop.Density == 'low')
+
+# Creating the matrix (but it's actually a data frame)
+# Ok so I just now discovered count() which would have made this a lot easier...
+
+# high
+high.stat=c( Closed = (sum(high$NEBC.Status == "Closed")),
+  `Some Open Limit` = (sum(high$NEBC.Status == "Some Open Limit")),
+  `Some Open` = (sum(high$NEBC.Status == "Some Open")),
+  `All Open Limit` = (sum(high$NEBC.Status == "All Open Limit")),
+  `All Open` = (sum(high$NEBC.Status == "All Open")),
+  `Never Closed` = (sum(high$NEBC.Status == "Never Closed")))
+
+# mid
+mid.stat=c(sum(mid$NEBC.Status == "Closed"), sum(mid$NEBC.Status == "Some Open Limit"), sum(mid$NEBC.Status == "Some Open"), sum(mid$NEBC.Status == "All Open Limit"), sum(mid$NEBC.Status == "All Open"), sum(mid$NEBC.Status == "Never Closed"))
+
+# low
+low.stat=c(sum(low$NEBC.Status == "Closed"), sum(low$NEBC.Status == "Some Open Limit"), sum(low$NEBC.Status == "Some Open"), sum(low$NEBC.Status == "All Open Limit"), sum(low$NEBC.Status == "All Open"), sum(low$NEBC.Status == "Never Closed"))
+
+# Final product, a completed matrix (technically a data frame)
+# a.chi.test is an extra data frame of the original... disregard 
+a.chi.test=data.frame(`High Pop`=c(high.stat), `Mid Pop`=c(mid.stat), `Low Pop`=c(low.stat))
+chi.test=data.frame(`High Pop`=c(high.stat), `Mid Pop`=c(mid.stat), `Low Pop`=c(low.stat))
+chi.test=mutate(chi.test, Col.Total=c(13,10,3,6,14,5))
+
+# Final data set
+row.sums = c(sum(chi.test$High.Pop),sum(chi.test$Mid.Pop),sum(chi.test$Low.Pop),sum(chi.test$Col.Total))
+chi.sq.test=rbind(chi.test, row.sums)
+
+```
+
+
+##### Null Hypothesis: 
+
+- Population size and the status of business closures are independent of each other and these results will be due to chance variation. 
+
+##### Alternative Hypothesis:
+
+- Population size and the status of business closures are dependent of each other and these results will not be due to chance variation. 
+
+##### Testing for Chi-Squared Statistic and the p-value for the data
+
+```{r comment=NA, echo=F, message=F, warning=F}
+# Using the `a.chi.test` data set instead of the `chi.sq.test` because it has the 6 rows that i need. I don't need the 7th row that `chi.sq.test` has. 
+chi = chisq.test(a.chi.test)
+
+expected.chi = data.frame(chi$expected)
+exp = c(expected.chi$High.Pop,expected.chi$Mid.Pop,expected.chi$Low.Pop)
+obs = c((chi.test$High.Pop),(chi.test$Mid.Pop),(chi.test$Low.Pop))
+X.stat = sum((obs-exp)^2/exp)
+p = 1-pchisq(X.stat,10)
+```
+
+```{r comment=NA,echo=F,warning=FALSE}
+# observed and expected values
+chi.sq.test
+expected.chi 
+
+# chi-squared test
+chi
+```
+
+- The Chi-Squared statistic is 6.581 with a p-value of 0.7643
+- I double checked the expected values by hand and manually input the chi-squared statistic and p-value, they were right. 
+
+
+##### Conclusion
+
+The p-value is 0.7643 which is well above the 0.05 threshold, so we must not reject the null and say that the population size and business closures are most likely independent of each other. 
+
+
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+
+# Creating AQI indicators 
+aqi.lvl = c()
+for(aqi in 1:length(covid.precise$Average.AQI.2020)){
+  if(covid.precise$Average.AQI.2020[aqi] <= 28.53){
+    aqi.lvl = append(aqi.lvl, "low-mid")
+  }
+  else{
+    aqi.lvl = append(aqi.lvl, "mid-high")
+  }
+}
+covid.precise$aqi.lvl=aqi.lvl
+
+# Created Good / Bad indicators on non-essential business closures 
+x=covid.precise$NEBC.Status
+good.bad=c()
+for(gb in 1:length(x)){
+  if(x[gb] == "Never Closed" | x[gb] == "All Open" | x[gb] == "All Open Limit"){
+    good.bad = append(good.bad, "bad")
+  }
+  else{
+    good.bad = append(good.bad, "good")
+  }
+}
+covid.precise$good.bad = good.bad
+
+# Sub setting good / bad indicators 
+bad=filter(covid.precise, good.bad == "bad")
+good=filter(covid.precise, good.bad == "good")
+
+# This is generating a simple random sample for the data
+# Change parameters of 1:6 to whatever the length is for the new data set 
+# I clicked on a random row in my data set to shuffle the locations around 
+# and no longer be in an sort of alphabetized order
+# sample(1:26,8,rep=T)
+
+# the numbers in good.states and bad.states are randomly selected AQI levels
+good.states = c(32,24,37,35,15,22,31,28)
+mean.good = mean(good.states)
+sd.good = nsd(good.states)
+
+bad.states = c(25,15,40,15,32,34,25,36)
+mean.bad = mean(bad.states)
+sd.bad = nsd(bad.states)
+
+
+
+
+```
+
+##### Testing for chance variation between the two averages against the total average. 
+
+- The average of the AQI from the simple random sample for states that fully or mostly closed down is 28 give or take 6.856.
+- The average of the AQI from the simple random sample for states that DID NOT fully or mostly close down is 27.75 give or take 8.771
+- The average of the AQI from 2020 was 28.44 give or take 7.956.
+
+#### Looking for correlation between Non-Essential Business Closures and 2020 Average AQI.
+
+- Were the AQI levels for the states that fully closed or at least closed down MOST non-essential businesses lower than the national average? (8 states chosen randomly that meet the criteria)
+- Were the AQI levels for the states that DID NOT fully closed or at least closed down MOST non-essential businesses greater than the national average? (8 states chosen randomly that meet the criteria)
+
+
+```{r message=FALSE,echo=FALSE,warning=FALSE}
+# For Good States
+# Null - The sample average is equal 28.44
+# Alt - The sample average is less than 28.44
+sd.plus1 = sqrt(8/7)*6.856
+sesum1 = sqrt(8)*sd.plus1
+seavg1 = sesum1/8
+t1 = (28-28.44)/seavg1
+p1 = 1-pt(t1, 7)
+```
+
+```{r message=FALSE,echo=FALSE,warning=FALSE}
+# For Bad States
+# Null - The sample average is 28.44
+# Alt - The sample average is less than 28
+sd.plus2 = sqrt(8/7)*8.771
+sesum2 = sqrt(8)*sd.plus2
+seavg2 = sesum2/8
+t2 = (27.75-28.44)/seavg2
+p2 = 1-pt(t2, 7)
+
+```
+
+##### After running a T-Test for both simple random samples, I found that both p-values were well above the 0.05 threshold and that they were most likely not due to chance variation. 
+
+
+
+
